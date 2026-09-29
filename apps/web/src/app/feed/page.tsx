@@ -16,7 +16,7 @@ import { useMobileDetect } from "@/hooks/useMobileDetect";
 import { MobileHeader } from "@/components/mobile/MobileHeader";
 import { MobileFeed } from "@/components/mobile/MobileFeed";
 import { MasonryCard } from "@/components/cards/MasonryCard";
-import { buildSignAndSubmit } from "@/lib/tx";
+import { GovernanceBanner } from "@/components/GovernanceBanner";
 import { nativeToScVal, Address } from "@stellar/stellar-sdk";
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -171,6 +171,9 @@ export default function FeedPage() {
 
   // Whether the current user follows nobody (following tab empty state)
   const [followsNobody, setFollowsNobody] = useState(false);
+
+  // Active governance proposal count for the announcement banner
+  const [activeProposalCount, setActiveProposalCount] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -448,8 +451,43 @@ export default function FeedPage() {
     };
   }, []);
 
-  const handleRefreshFeed = () => {
-    setCursor(null);
+  /* ── Fetch active governance proposal count for announcement banner ─── */
+  useEffect(() => {
+    let cancelled = false;
+    const fetchActiveProposals = async () => {
+      const contractIdEnv = process.env.NEXT_PUBLIC_CONTRACT_ID;
+      if (!contractIdEnv) return;
+      try {
+        const govClient = new LinkoraClient({
+          rpcUrl: process.env.NEXT_PUBLIC_RPC_URL ?? "https://soroban-testnet.stellar.org",
+          contractId: contractIdEnv,
+        });
+        let count = 0;
+        // Scan the first 50 proposals to count active ones
+        for (let n = 1; n <= 50; n++) {
+          try {
+            const proposal = await govClient.govGetProposal(BigInt(n));
+            // GovStatus.Active = "Active"
+            if ((proposal as { status?: string }).status === "Active") {
+              count++;
+            }
+          } catch {
+            // Hit end of list
+            break;
+          }
+        }
+        if (!cancelled) setActiveProposalCount(count);
+      } catch {
+        // Non-critical — swallow errors silently
+      }
+    };
+    void fetchActiveProposals();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRefreshFeed = () => {    setCursor(null);
     setHasNewPosts(false);
     loadFeed(null, false);
   };
@@ -591,6 +629,9 @@ export default function FeedPage() {
                 </button>
               </div>
             </header>
+
+            {/* Governance announcement banner — shown when active proposals exist */}
+            <GovernanceBanner activeProposalCount={activeProposalCount} />
 
             {/* Auth required wall for Following Tab */}
             {activeTab === "following" && (!connected || !currentUserAddress) ? (
