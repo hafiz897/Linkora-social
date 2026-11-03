@@ -17,21 +17,6 @@ const PAGE_SIZE = 10;
 // and one underlying rpc.Server connection, avoiding per-action overhead.
 const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
 
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
-
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
-
-// ── Shared Client Instance ───────────────────────────────────────────────────
-// Hoist a single LinkoraClient to module scope so all handlers reuse one client
-// and one underlying rpc.Server connection, avoiding per-action overhead.
-const client = new LinkoraClient({ rpcUrl: RPC_URL, contractId: CONTRACT_ID });
-
 export default function GovernancePage() {
   const { address, connected } = useWalletContext();
   const [proposals, setProposals] = useState<ProposalWithQuorum[]>([]);
@@ -47,6 +32,12 @@ export default function GovernancePage() {
   const [formParam, setFormParam] = useState<GovParameter>(GovParameter.FeeBps);
   const [formValue, setFormValue] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Vote loading state: tracks the proposal ID currently being voted on
+  // and which direction (true = for, false = against) was clicked.
+  const [votingProposalId, setVotingProposalId] = useState<bigint | null>(null);
+  const [votingSupport, setVotingSupport] = useState<boolean | null>(null);
+  const [voteErrors, setVoteErrors] = useState<Record<string, string>>({});
 
   const fetchProposals = async (targetPage: number = 1) => {
     if (!CONTRACT_ID) return;
@@ -116,12 +107,30 @@ export default function GovernancePage() {
 
   const handleVote = async (proposalId: bigint, support: boolean) => {
     if (!address || !CONTRACT_ID) return;
+    // Prevent double-submission
+    if (votingProposalId !== null) return;
+
+    const key = proposalId.toString();
+    setVotingProposalId(proposalId);
+    setVotingSupport(support);
+    // Clear any previous error for this proposal
+    setVoteErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
     try {
       await client.govVote(address, proposalId, support);
       await fetchProposals();
     } catch (error) {
       console.error("Failed to vote", error);
-      alert("Failed to vote");
+      const message =
+        error instanceof Error ? error.message : "Failed to submit vote. Please try again.";
+      setVoteErrors((prev) => ({ ...prev, [key]: message }));
+    } finally {
+      setVotingProposalId(null);
+      setVotingSupport(null);
     }
   };
 
@@ -256,19 +265,99 @@ export default function GovernancePage() {
                       </div>
 
                       {connected && p.status === GovStatus.Active && (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => handleVote(p.id, true)}
-                            className="flex-1 sm:flex-none px-4 py-2 bg-green-600/20 text-green-500 hover:bg-green-600/30 border border-green-600/50 rounded-lg transition-colors text-sm font-medium"
-                          >
-                            Vote For
-                          </button>
-                          <button
-                            onClick={() => handleVote(p.id, false)}
-                            className="flex-1 sm:flex-none px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600/30 border border-red-600/50 rounded-lg transition-colors text-sm font-medium"
-                          >
-                            Vote Against
-                          </button>
+                        <div className="flex flex-col gap-2 items-end">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => handleVote(p.id, true)}
+                              disabled={votingProposalId !== null}
+                              aria-busy={votingProposalId === p.id && votingSupport === true}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-green-600/20 text-green-500 hover:bg-green-600/30 border border-green-600/50 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                              {votingProposalId === p.id && votingSupport === true ? (
+                                <>
+                                  <svg
+                                    className="animate-spin h-4 w-4 text-green-400"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    aria-hidden="true"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                    />
+                                  </svg>
+                                  Submitting…
+                                </>
+                              ) : (
+                                "Vote For"
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleVote(p.id, false)}
+                              disabled={votingProposalId !== null}
+                              aria-busy={votingProposalId === p.id && votingSupport === false}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-red-600/20 text-red-500 hover:bg-red-600/30 border border-red-600/50 rounded-lg transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                              {votingProposalId === p.id && votingSupport === false ? (
+                                <>
+                                  <svg
+                                    className="animate-spin h-4 w-4 text-red-400"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    aria-hidden="true"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                    />
+                                  </svg>
+                                  Submitting…
+                                </>
+                              ) : (
+                                "Vote Against"
+                              )}
+                            </button>
+                          </div>
+                          {/* Status text while vote is pending */}
+                          {votingProposalId === p.id && (
+                            <p
+                              className="text-xs text-violet-400 animate-pulse"
+                              role="status"
+                              aria-live="polite"
+                            >
+                              Submitting vote…
+                            </p>
+                          )}
+                          {/* Error message if vote failed */}
+                          {voteErrors[p.id.toString()] && (
+                            <p
+                              className="text-xs text-red-400 mt-1"
+                              role="alert"
+                              aria-live="assertive"
+                            >
+                              {voteErrors[p.id.toString()]}
+                            </p>
+                          )}
                         </div>
                       )}
 
